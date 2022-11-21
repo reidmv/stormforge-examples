@@ -1,0 +1,181 @@
+---
+apiVersion: optimize.stormforge.io/v1beta2
+kind: Experiment
+metadata:
+  name: postgres-experiment
+  namespace: postgres
+  labels:
+    stormforge.io/application: 'postgres'
+    stormforge.io/objective: 'duration-vs-cost'
+    stormforge.io/scenario: 'pgbench'
+
+spec:
+  optimization:
+  - name: experimentBudget
+    value: "100"
+
+  parameters:
+  - name: cpu
+    baseline: 4000
+    min: 2000
+    max: 4000
+  - name: memory
+    baseline: 4096
+    min: 2048
+    max: 4096
+  - name: shared_buffers
+    baseline: 1024
+    min: 200
+    max: 3072
+  - name: effective_cache_size
+    baseline: 2048
+    min: 512
+    max: 3584
+  - name: work_mem
+    baseline: 4
+    min: 2
+    max: 20
+
+  metrics:
+  - name: tps
+    type: prometheus
+    query: 'scalar( tps{job="trialRun", instance="{{ .Trial.Name }}"} )'
+  - name: latency
+    type: prometheus
+    minimize: true
+    query: 'scalar( latency{job="trialRun", instance="{{ .Trial.Name }}"} )'
+  - name: failed
+    type: prometheus
+    minimize: true
+    query: 'scalar( failed{job="trialRun", instance="{{ .Trial.Name }}"} )'
+  - name: cost
+    minimize: true
+    query: '{{ resourceRequests .Target "cpu=0.017,memory=0.000000000003" }}'
+    target:
+      apiVersion: v1
+      kind: PodList
+      matchLabels:
+        app.kubernetes.io/instance: postgres-stormforge-example
+        app.kubernetes.io/name: postgres
+
+  patches:
+  - targetRef:
+      apiVersion: apps/v1
+      kind: Deployment
+      name: postgres
+    patch: |
+      spec:
+        template:
+          spec:
+            containers:
+            - name: postgres
+              resources:
+                limits:
+                  cpu: '{{ .Values.cpu }}m'
+                  memory: '{{ .Values.memory }}M'
+                requests:
+                  cpu: '{{ .Values.cpu }}m'
+                  memory: '{{ .Values.memory }}M'
+              args:
+              - '-c'
+              - 'shared_buffers={{ .Values.shared_buffers }}MB'
+              - '-c'
+              - 'effective_cache_size={{ .Values.effective_cache_size }}MB'
+              - '-c'
+              - 'work_mem={{ .Values.work_mem }}MB'
+
+  trialTemplate:
+    metadata:
+      labels:
+        stormforge.io/application: 'postgres'
+        stormforge.io/objective: 'duration-vs-cost'
+        stormforge.io/scenario: 'pgbench'
+
+    spec:
+      setupServiceAccountName: optimize-pro-setuptask-sa
+      setupTasks:
+      - name: monitoring
+        args:
+        - prometheus
+        - $(MODE)
+
+      jobTemplate:
+        metadata:
+          labels:
+            stormforge.io/application: 'postgres'
+            stormforge.io/objective: 'duration-vs-cost'
+            stormforge.io/scenario: 'pgbench'
+        spec:
+          template:
+            metadata:
+              labels:
+                stormforge.io/application: 'postgres'
+                stormforge.io/objective: 'duration-vs-cost'
+                stormforge.io/scenario: 'pgbench'
+            spec:
+              volumes:
+              - name: work-dir
+                emptyDir: {}
+              initContainers:
+              - name: initializer
+                image: postgres:15.0-alpine
+                envFrom:
+                - secretRef:
+                    name: postgres-secret
+                env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+                command:
+                - '/usr/local/bin/pgbench'
+                args:
+                - '--initialize'
+                - '--scale=20'
+                - '--host=postgres'
+                - '--username=$(POSTGRES_USER)'
+                - '--username=$(POSTGRES_USER)'
+                - '$(POSTGRES_DB)'
+              - name: benchmarker
+                image: postgres:15.0-alpine
+                volumeMounts:
+                - mountPath: /work-dir
+                  name: work-dir
+                envFrom:
+                - secretRef:
+                    name: postgres-secret
+                env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+                command:
+                - '/bin/sh'
+                - '-c'
+                - |
+                  /usr/local/bin/pgbench \
+                    --client=5 \
+                    --jobs=10 \
+                    --scale=20 \
+                    --transactions=10000 \
+                    --host=postgres \
+                    --username=$(POSTGRES_USER) \
+                    $(POSTGRES_DB) \
+                  | tee /work-dir/benchmark.out
+              containers:
+              - name: metrics-reporter
+                image: curlimages/curl:7.86.0
+                volumeMounts:
+                - mountPath: /work-dir
+                  name: work-dir
+                command:
+                - '/bin/sh'
+                - '-c'
+                - |
+                  curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
+                    tps $(egrep '^tps = ' /work-dir/benchmark.out | cut -f 3 -d ' ')
+                    latency $(egrep '^latency average = ' /work-dir/benchmark.out  | cut -f 4 -d ' ')
+                    failed $(grep 'failed transactions:' /work-dir/benchmark.out  | cut -f 5 -d ' ')
+                  EOF
