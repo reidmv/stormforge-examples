@@ -14,6 +14,24 @@ spec:
     value: "100"
 
   parameters:
+
+
+    # Ideas:
+    # - Ideal heap size
+    #   Never saw benefit above 6GB
+    #   512MB heap was typical, rest for OS/FS page cache
+    #   Makes a difference using larger message sizes for clients.
+    # - Storage and iops are usually the defining performance factors
+    # - Topics:
+    #      - partition count
+    #      - replica count
+    #      - Affected by whether data can be separated by key
+    #      - Consumer: try and demonstrate fetch-from-follower improvement?
+    #      - 
+
+
+
+
   - name: shared_buffers
     baseline: 1024
     min: 200
