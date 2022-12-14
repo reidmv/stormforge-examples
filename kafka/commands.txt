@@ -1,0 +1,34 @@
+kafka-consumer-perf-test.sh \
+  --topic test \
+  --bootstrap-server kafka-0.kafka-svc:9092 \
+  --messages 10000000
+
+
+kafka-producer-perf-test.sh \
+  --topic test \
+  --num-records 1000000 \
+  --throughput -1 \
+  --record-size 1000 \
+  --producer-props \
+      bootstrap.servers=kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
+      batch.size=1000 \
+      acks=1 \
+      linger.ms=100000 \
+      buffer.memory=4294967296 \
+      compression.type=none \
+      request.timeout.ms=300000
+
+
+kafka-producer-perf-test.sh \
+  --topic test \
+  --num-records 1 \
+  --throughput -1 \
+  --record-size 1000 \
+  --producer-props \
+      bootstrap.servers=kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
+      batch.size=1000 \
+      acks=1 \
+      linger.ms=100000 \
+      buffer.memory=4294967296 \
+      compression.type=none \
+      request.timeout.ms=300000

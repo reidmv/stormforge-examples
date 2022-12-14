@@ -1,0 +1,132 @@
+---
+apiVersion: optimize.stormforge.io/v1beta2
+kind: Experiment
+metadata:
+  name: kafka-experiment-001
+  namespace: kafka
+  labels:
+    stormforge.io/application: 'kafka'
+    stormforge.io/scenario: 'perftest'
+
+spec:
+  optimization:
+  - name: experimentBudget
+    value: "100"
+
+  parameters:
+  - name: shared_buffers
+    baseline: 1024
+    min: 200
+    max: 3072
+  - name: effective_cache_size
+    baseline: 2048
+    min: 512
+    max: 3584
+  - name: work_mem
+    baseline: 4
+    min: 2
+    max: 20
+
+  metrics:
+  - name: consumer-MBs-per-second
+    type: prometheus
+    query: 'scalar( consumer_mbs_per_second {job="trialRun", instance="{{ .Trial.Name }}"} )'
+  - name: consumer-msgs-per-second
+    type: prometheus
+    query: 'scalar( consumer_msgs_per_second {job="trialRun", instance="{{ .Trial.Name }}"} )'
+  - name: producer-msgs-per-second
+    type: prometheus
+    query: 'scalar( producer_msgs_per_second {job="trialRun", instance="{{ .Trial.Name }}"} )'
+  - name: producer-avg-ms-latency
+    type: prometheus
+    query: 'scalar( producer_avg_ms_latency {job="trialRun", instance="{{ .Trial.Name }}"} )'
+  - name: producer-p95-ms-latency
+    type: prometheus
+    query: 'scalar( producer_p95_ms_latency {job="trialRun", instance="{{ .Trial.Name }}"} )'
+
+  patches:
+  - targetRef:
+      apiVersion: apps/v1
+      kind: Deployment
+      name: postgres
+    patch: |
+      spec:
+        template:
+          spec:
+            containers:
+            - name: postgres
+              args:
+              - '-c'
+              - 'shared_buffers={{ .Values.shared_buffers }}MB'
+              - '-c'
+              - 'effective_cache_size={{ .Values.effective_cache_size }}MB'
+              - '-c'
+              - 'work_mem={{ .Values.work_mem }}MB'      
+
+  trialTemplate:
+    spec:
+      setupServiceAccountName: optimize-pro-setuptask-sa
+      setupTasks:
+      - name: monitoring
+        args:
+        - prometheus
+        - $(MODE)
+
+      jobTemplate:
+        spec:
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+              - name: perf-test-consumer
+                image: docker.io/bitnami/kafka:3.3.1
+                resources:
+                  requests:
+                    memory: "1Gi"
+                    cpu: "500m"
+                command:
+                - '/bin/sh'
+                - '-c'
+                - |
+                  set -e
+                  kafka-consumer-perf-test.sh \
+                    --topic test \
+                    --bootstrap-server kafka-0.kafka-svc:9092 \
+                    --messages 1000000 \
+                  | tee /consumer.out
+                  exit 0
+                  curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
+                    consumer_mbs_per_second $(tail -1 /consumer.out | awk -F ', ' '{print $4}')
+                    consumer_msgs_per_second $(tail -1 /consumer.out  | awk -F ', ' '{print $6}')
+                  EOF
+              - name: perf-test-producer
+                image: docker.io/bitnami/kafka:3.3.1
+                resources:
+                  requests:
+                    memory: "500Mi"
+                    cpu: "500m"
+                command:
+                - '/bin/sh'
+                - '-c'
+                - |
+                  set -e
+                  kafka-producer-perf-test.sh \
+                    --topic test \
+                    --num-records 1000000 \
+                    --throughput -1 \
+                    --record-size 1000 \
+                    --producer-props \
+                        bootstrap.servers=kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
+                        batch.size=1000 \
+                        acks=1 \
+                        linger.ms=100000 \
+                        buffer.memory=268435456 \
+                        compression.type=none \
+                        request.timeout.ms=300000 \
+                  | tee /producer.out
+                  exit 0
+                  curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
+                    producer_msgs_per_second $(tail -1 /producer.out | cut -f 4 -d ' ')
+                    producer_avg_ms_latency $(tail -1 /producer.out  | cut -f 8 -d ' ')
+                    producer_p95_ms_latency $(tail -1 /producer.out  | cut -f 19 -d ' ')
+                  EOF
