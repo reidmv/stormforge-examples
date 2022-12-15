@@ -3,7 +3,6 @@ apiVersion: optimize.stormforge.io/v1beta2
 kind: Experiment
 metadata:
   name: kafka-experiment-001
-  namespace: kafka
   labels:
     stormforge.io/application: 'kafka'
     stormforge.io/scenario: 'perftest'
