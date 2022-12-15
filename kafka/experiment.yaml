@@ -11,39 +11,33 @@ metadata:
 spec:
   optimization:
   - name: experimentBudget
-    value: "100"
+    value: "60"
 
+  # Ideas:
+  # - Ideal heap size
+  #   Never saw benefit above 6GB
+  #   512MB heap was typical, rest for OS/FS page cache
+  #   Makes a difference using larger message sizes for clients.
+  # - Storage and iops are usually the defining performance factors
+  # - Topics:
+  #      - partition count
+  #      - replica count
+  #      - Affected by whether data can be separated by key
+  #      - Consumer: try and demonstrate fetch-from-follower improvement?
+  #      - 
   parameters:
-
-
-    # Ideas:
-    # - Ideal heap size
-    #   Never saw benefit above 6GB
-    #   512MB heap was typical, rest for OS/FS page cache
-    #   Makes a difference using larger message sizes for clients.
-    # - Storage and iops are usually the defining performance factors
-    # - Topics:
-    #      - partition count
-    #      - replica count
-    #      - Affected by whether data can be separated by key
-    #      - Consumer: try and demonstrate fetch-from-follower improvement?
-    #      - 
-
-
-
-
-  - name: shared_buffers
+  - name: partitions
+    baseline: 30
+    min: 1
+    max: 3000
+  - name: replicas
+    baseline: 1
+    min: 1
+    max: 3
+  - name: heap_mb
     baseline: 1024
-    min: 200
-    max: 3072
-  - name: effective_cache_size
-    baseline: 2048
-    min: 512
-    max: 3584
-  - name: work_mem
-    baseline: 4
-    min: 2
-    max: 20
+    min: 256
+    max: 8192
 
   metrics:
   - name: consumer-MBs-per-second
@@ -65,21 +59,20 @@ spec:
   patches:
   - targetRef:
       apiVersion: apps/v1
-      kind: Deployment
-      name: postgres
+      kind: StatefulSet
+      name: kafka
     patch: |
       spec:
         template:
           spec:
             containers:
-            - name: postgres
-              args:
-              - '-c'
-              - 'shared_buffers={{ .Values.shared_buffers }}MB'
-              - '-c'
-              - 'effective_cache_size={{ .Values.effective_cache_size }}MB'
-              - '-c'
-              - 'work_mem={{ .Values.work_mem }}MB'      
+            - name: kafka
+              resources:
+                requests:
+                  memory: {{ .Values.heap_mb }}Mi
+              env:
+              - name: KAFKA_HEAP_OPTS
+                value: '-Xmx{{ .Values.heap_mb }}m -Xms{{ .Values.heap_mb }}m'
 
   trialTemplate:
     spec:
@@ -92,44 +85,77 @@ spec:
 
       jobTemplate:
         spec:
+          parallelism: 2
+          completions: 2
           template:
             spec:
               restartPolicy: Never
+              volumes:
+              - name: work-dir
+                emptyDir: {}
+              initContainers:
+              - name: topic-creator
+                image: docker.io/bitnami/kafka:3.3.1
+                resources:
+                  requests:
+                    memory: "100Mi"
+                    cpu: "100m"
+                command:
+                - '/bin/sh'
+                - '-c'
+                - |
+                  kafka-topics.sh --create --if-not-exists \
+                    --bootstrap-server kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
+                    --topic "test-${PARTITIONS}x${REPLICAS}" \
+                    --partitions $PARTITIONS \
+                    --replication-factor $REPLICAS \
+                    --config retention.ms=300000
+                  exit 0
               containers:
-              - name: perf-test-consumer
+              - name: consumer
                 image: docker.io/bitnami/kafka:3.3.1
                 resources:
                   requests:
                     memory: "1Gi"
                     cpu: "500m"
+                volumeMounts:
+                - mountPath: /work-dir
+                  name: work-dir
                 command:
                 - '/bin/sh'
                 - '-c'
                 - |
                   set -e
                   kafka-consumer-perf-test.sh \
-                    --topic test \
-                    --bootstrap-server kafka-0.kafka-svc:9092 \
+                    --bootstrap-server kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
+                    --topic "test-${PARTITIONS}x${REPLICAS}" \
                     --messages 1000000 \
-                  | tee /consumer.out
-                  exit 0
+                  | tee /work-dir/consumer.out
                   curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
-                    consumer_mbs_per_second $(tail -1 /consumer.out | awk -F ', ' '{print $4}')
-                    consumer_msgs_per_second $(tail -1 /consumer.out  | awk -F ', ' '{print $6}')
+                    consumer_mbs_per_second $(tail -1 /work-dir/consumer.out | awk -F ', ' '{print $4}')
+                    consumer_msgs_per_second $(tail -1 /work-dir/consumer.out  | awk -F ', ' '{print $6}')
                   EOF
-              - name: perf-test-producer
+              - name: producer
                 image: docker.io/bitnami/kafka:3.3.1
                 resources:
                   requests:
                     memory: "500Mi"
                     cpu: "500m"
+                env:
+                - name: PARTITIONS
+                  value: "30"
+                - name: REPLICAS
+                  value: "3"
+                volumeMounts:
+                - mountPath: /work-dir
+                  name: work-dir
                 command:
                 - '/bin/sh'
                 - '-c'
                 - |
                   set -e
                   kafka-producer-perf-test.sh \
-                    --topic test \
+                    --topic "test-${PARTITIONS}x${REPLICAS}" \
                     --num-records 1000000 \
                     --throughput -1 \
                     --record-size 1000 \
@@ -141,10 +167,9 @@ spec:
                         buffer.memory=268435456 \
                         compression.type=none \
                         request.timeout.ms=300000 \
-                  | tee /producer.out
-                  exit 0
+                  | tee /work-dir/producer.out
                   curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
-                    producer_msgs_per_second $(tail -1 /producer.out | cut -f 4 -d ' ')
-                    producer_avg_ms_latency $(tail -1 /producer.out  | cut -f 8 -d ' ')
-                    producer_p95_ms_latency $(tail -1 /producer.out  | cut -f 19 -d ' ')
+                    producer_msgs_per_second $(tail -1 /work-dir/producer.out | cut -f 4 -d ' ')
+                    producer_avg_ms_latency $(tail -1 /work-dir/producer.out  | cut -f 8 -d ' ')
+                    producer_p95_ms_latency $(tail -1 /work-dir/producer.out  | cut -f 19 -d ' ')
                   EOF

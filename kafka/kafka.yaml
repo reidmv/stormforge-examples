@@ -35,12 +35,14 @@ spec:
         image: docker.io/bitnami/kafka:3.3.1
         resources:
           requests:
-            memory: "500Mi"
-            cpu: "250m"
+            memory: "1Gi"
+            cpu: "500m"
         ports:
         - containerPort: 9092
         - containerPort: 9093
         env:
+        - name: KAFKA_HEAP_OPTS
+          value: '-Xmx1G -Xms1G'
         - name: KAFKA_ENABLE_KRAFT
           value: 'yes'
         - name: KAFKA_KRAFT_CLUSTER_ID
@@ -57,10 +59,6 @@ spec:
           value: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
         - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
           value: '0@kafka-0.kafka-svc:9093,1@kafka-1.kafka-svc:9093,2@kafka-2.kafka-svc:9093'
-        - name: KAFKA_CFG_NUM_PARTITIONS
-          value: '3'
-        - name: KAFKA_CFG_LOG_RETENTION_MS
-          value: '30000'
         command:
         - '/bin/sh'
         - '-c'
@@ -77,4 +75,4 @@ spec:
       accessModes: [ "ReadWriteOnce" ]
       resources:
         requests:
-          storage: 2Gi
+          storage: 3Gi

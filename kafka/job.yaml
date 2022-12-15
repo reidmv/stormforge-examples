@@ -5,45 +5,86 @@ metadata:
 spec:
   parallelism: 2
   completions: 2
-  completionMode: Indexed
   template:
     spec:
       restartPolicy: Never
+      volumes:
+      - name: work-dir
+        emptyDir: {}
+      initContainers:
+      - name: topic-creator
+        image: docker.io/bitnami/kafka:3.3.1
+        resources:
+          requests:
+            memory: "100Mi"
+            cpu: "100m"
+        env:
+        - name: PARTITIONS
+          value: "30"
+        - name: REPLICAS
+          value: "3"
+        command:
+        - '/bin/sh'
+        - '-c'
+        - |
+          kafka-topics.sh --create --if-not-exists \
+            --bootstrap-server kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
+            --topic "test-${PARTITIONS}x${REPLICAS}" \
+            --partitions $PARTITIONS \
+            --replication-factor $REPLICAS \
+            --config retention.ms=300000
+          exit 0
       containers:
-      - name: perf-test-consumer
+      - name: consumer
         image: docker.io/bitnami/kafka:3.3.1
         resources:
           requests:
             memory: "1Gi"
             cpu: "500m"
+        env:
+        - name: PARTITIONS
+          value: "30"
+        - name: REPLICAS
+          value: "3"
+        volumeMounts:
+        - mountPath: /work-dir
+          name: work-dir
         command:
         - '/bin/sh'
         - '-c'
         - |
           set -e
           kafka-consumer-perf-test.sh \
-            --topic test \
-            --bootstrap-server kafka-0.kafka-svc:9092 \
+            --bootstrap-server kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
+            --topic "test-${PARTITIONS}x${REPLICAS}" \
             --messages 1000000 \
-          | tee /consumer.out
+          | tee /work-dir/consumer.out
           exit 0
           curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
-            consumer_mbs_per_second $(tail -1 /consumer.out | awk -F ', ' '{print $4}')
-            consumer_msgs_per_second $(tail -1 /consumer.out  | awk -F ', ' '{print $6}')
+            consumer_mbs_per_second $(tail -1 /work-dir/consumer.out | awk -F ', ' '{print $4}')
+            consumer_msgs_per_second $(tail -1 /work-dir/consumer.out  | awk -F ', ' '{print $6}')
           EOF
-      - name: perf-test-producer
+      - name: producer
         image: docker.io/bitnami/kafka:3.3.1
         resources:
           requests:
             memory: "500Mi"
             cpu: "500m"
+        env:
+        - name: PARTITIONS
+          value: "30"
+        - name: REPLICAS
+          value: "3"
+        volumeMounts:
+        - mountPath: /work-dir
+          name: work-dir
         command:
         - '/bin/sh'
         - '-c'
         - |
           set -e
           kafka-producer-perf-test.sh \
-            --topic test \
+            --topic "test-${PARTITIONS}x${REPLICAS}" \
             --num-records 1000000 \
             --throughput -1 \
             --record-size 1000 \
@@ -55,10 +96,10 @@ spec:
                 buffer.memory=268435456 \
                 compression.type=none \
                 request.timeout.ms=300000 \
-          | tee /producer.out
+          | tee /work-dir/producer.out
           exit 0
           curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
-            producer_msgs_per_second $(tail -1 /producer.out | cut -f 4 -d ' ')
-            producer_avg_ms_latency $(tail -1 /producer.out  | cut -f 8 -d ' ')
-            producer_p95_ms_latency $(tail -1 /producer.out  | cut -f 19 -d ' ')
+            producer_msgs_per_second $(tail -1 /work-dir/producer.out | cut -f 4 -d ' ')
+            producer_avg_ms_latency $(tail -1 /work-dir/producer.out  | cut -f 8 -d ' ')
+            producer_p95_ms_latency $(tail -1 /work-dir/producer.out  | cut -f 19 -d ' ')
           EOF
