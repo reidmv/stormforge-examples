@@ -64,6 +64,9 @@ spec:
             consumer_mbs_per_second $(tail -1 /work-dir/consumer.out | awk -F ', ' '{print $4}')
             consumer_msgs_per_second $(tail -1 /work-dir/consumer.out  | awk -F ', ' '{print $6}')
           EOF
+          kafka-topics.sh --delete --if-exists \
+            --bootstrap-server kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
+            --topic "test-${PARTITIONS}x${REPLICAS}:
       - name: producer
         image: docker.io/bitnami/kafka:3.3.1
         resources:

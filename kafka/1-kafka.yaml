@@ -68,6 +68,19 @@ spec:
         volumeMounts:
         - name: kafka-storage
           mountPath: /bitnami/kafka
+        readinessProbe:
+          timeoutSeconds: 5
+          periodSeconds: 5
+          initialDelaySeconds: 30
+          tcpSocket:
+             port: 9092
+        livenessProbe:
+          timeoutSeconds: 5
+          periodSeconds: 5
+          initialDelaySeconds: 60
+          exec:
+            command: ["/opt/bitnami/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server=localhost:9092"]
+
   volumeClaimTemplates:
   - metadata:
       name: kafka-storage
@@ -75,4 +88,4 @@ spec:
       accessModes: [ "ReadWriteOnce" ]
       resources:
         requests:
-          storage: 3Gi
+          storage: 10Gi

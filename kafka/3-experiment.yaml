@@ -2,7 +2,7 @@
 apiVersion: optimize.stormforge.io/v1beta2
 kind: Experiment
 metadata:
-  name: kafka-experiment-001
+  name: kafka-001
   labels:
     stormforge.io/application: 'kafka'
     stormforge.io/scenario: 'perftest'
@@ -35,25 +35,27 @@ spec:
     max: 3
   - name: heap_mb
     baseline: 1024
-    min: 256
+    min: 512
     max: 8192
 
   metrics:
   - name: consumer-MBs-per-second
     type: prometheus
-    query: 'scalar( consumer_mbs_per_second {job="trialRun", instance="{{ .Trial.Name }}"} )'
+    query: 'scalar(avg_over_time(consumer_mbs_per_second{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
   - name: consumer-msgs-per-second
     type: prometheus
-    query: 'scalar( consumer_msgs_per_second {job="trialRun", instance="{{ .Trial.Name }}"} )'
+    query: 'scalar(avg_over_time(consumer_msgs_per_second{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
   - name: producer-msgs-per-second
     type: prometheus
-    query: 'scalar( producer_msgs_per_second {job="trialRun", instance="{{ .Trial.Name }}"} )'
-  - name: producer-avg-ms-latency
-    type: prometheus
-    query: 'scalar( producer_avg_ms_latency {job="trialRun", instance="{{ .Trial.Name }}"} )'
+    query: 'scalar(avg_over_time(producer_msgs_per_second{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
   - name: producer-p95-ms-latency
     type: prometheus
-    query: 'scalar( producer_p95_ms_latency {job="trialRun", instance="{{ .Trial.Name }}"} )'
+    query: 'scalar(avg_over_time(producer_p95_ms_latency{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
+    minimize: true
+  - name: producer-avg-ms-latency
+    type: prometheus
+    query: 'scalar(avg_over_time(producer_avg_ms_latency{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
+    optimize: false
 
   patches:
   - targetRef:
@@ -75,6 +77,15 @@ spec:
 
   trialTemplate:
     spec:
+      readinessGates:
+      - name: kafka
+        apiVersion: apps/v1
+        kind: StatefulSet
+        periodSeconds: 5
+        failureThreshold: 60
+        conditionTypes:
+        - stormforge.io/app-ready
+
       setupServiceAccountName: optimize-pro-setuptask-sa
       setupTasks:
       - name: monitoring
@@ -93,7 +104,26 @@ spec:
               - name: work-dir
                 emptyDir: {}
               initContainers:
-              - name: topic-creator
+              - name: topic-delete
+                image: docker.io/bitnami/kafka:3.3.1
+                resources:
+                  requests:
+                    memory: "100Mi"
+                    cpu: "100m"
+                command:
+                - '/bin/sh'
+                - '-c'
+                - |
+                  BROKERS='kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092'
+                  for old_topic in $(kafka-topics.sh --list --bootstrap-server "$BROKERS" \
+                    | grep test | grep -v "test-${PARTITIONS}p-${REPLICAS}r-${HEAP_MB}m")
+                  do
+                    kafka-topics.sh --delete --if-exists \
+                      --bootstrap-server "$BROKERS"
+                      --topic "$old_topic"
+                  done
+                  exit 0
+              - name: topic-create
                 image: docker.io/bitnami/kafka:3.3.1
                 resources:
                   requests:
@@ -105,7 +135,7 @@ spec:
                 - |
                   kafka-topics.sh --create --if-not-exists \
                     --bootstrap-server kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
-                    --topic "test-${PARTITIONS}x${REPLICAS}" \
+                    --topic "test-${PARTITIONS}p-${REPLICAS}r-${HEAP_MB}m" \
                     --partitions $PARTITIONS \
                     --replication-factor $REPLICAS \
                     --config retention.ms=300000
@@ -127,8 +157,9 @@ spec:
                   set -e
                   kafka-consumer-perf-test.sh \
                     --bootstrap-server kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
-                    --topic "test-${PARTITIONS}x${REPLICAS}" \
+                    --topic "test-${PARTITIONS}p-${REPLICAS}r-${HEAP_MB}m" \
                     --messages 1000000 \
+                    --timeout 300000 \
                   | tee /work-dir/consumer.out
                   curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
                     consumer_mbs_per_second $(tail -1 /work-dir/consumer.out | awk -F ', ' '{print $4}')
@@ -154,7 +185,7 @@ spec:
                 - |
                   set -e
                   kafka-producer-perf-test.sh \
-                    --topic "test-${PARTITIONS}x${REPLICAS}" \
+                    --topic "test-${PARTITIONS}p-${REPLICAS}r-${HEAP_MB}m" \
                     --num-records 1000000 \
                     --throughput -1 \
                     --record-size 1000 \
