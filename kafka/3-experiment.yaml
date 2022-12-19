@@ -119,7 +119,7 @@ spec:
                     | grep test | grep -v "test-${PARTITIONS}p-${REPLICAS}r-${HEAP_MB}m")
                   do
                     kafka-topics.sh --delete --if-exists \
-                      --bootstrap-server "$BROKERS"
+                      --bootstrap-server "$BROKERS" \
                       --topic "$old_topic"
                   done
                   exit 0
