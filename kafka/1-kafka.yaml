@@ -75,9 +75,9 @@ spec:
           tcpSocket:
              port: 9092
         livenessProbe:
-          timeoutSeconds: 5
-          periodSeconds: 5
-          initialDelaySeconds: 60
+          timeoutSeconds: 15
+          periodSeconds: 60
+          initialDelaySeconds: 120
           exec:
             command: ["/opt/bitnami/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server=localhost:9092"]
 
