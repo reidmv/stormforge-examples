@@ -30,6 +30,10 @@ spec:
     spec:
       securityContext:
         fsGroup: 0
+      volumes:
+      - name: kafka-storage
+        emptyDir:
+          sizeLimit: 10Gi
       containers:
       - name: kafka
         image: docker.io/bitnami/kafka:3.3.1
@@ -70,24 +74,8 @@ spec:
         volumeMounts:
         - name: kafka-storage
           mountPath: /bitnami/kafka
-        readinessProbe:
-          timeoutSeconds: 5
-          periodSeconds: 5
-          initialDelaySeconds: 30
+        startupProbe:
+          failureThreshold: 30
+          periodSeconds: 10
           tcpSocket:
              port: 9092
-        livenessProbe:
-          timeoutSeconds: 15
-          periodSeconds: 60
-          initialDelaySeconds: 120
-          exec:
-            command: ["/opt/bitnami/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server=localhost:9092"]
-
-  volumeClaimTemplates:
-  - metadata:
-      name: kafka-storage
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      resources:
-        requests:
-          storage: 10Gi
