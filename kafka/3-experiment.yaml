@@ -10,21 +10,13 @@ metadata:
 spec:
   optimization:
   - name: experimentBudget
-    value: "60"
+    value: "80"
 
-  # Ideas:
-  # - Ideal heap size
-  #   Never saw benefit above 6GB
-  #   512MB heap was typical, rest for OS/FS page cache
-  #   Makes a difference using larger message sizes for clients.
-  # - Storage and iops are usually the defining performance factors
-  # - Topics:
-  #      - partition count
-  #      - replica count
-  #      - Affected by whether data can be separated by key
-  #      - Consumer: try and demonstrate fetch-from-follower improvement?
-  #      - 
   parameters:
+  - name: cpu_m
+    baseline: 500
+    min: 100
+    max: 2000
   - name: heap_mb
     baseline: 1024
     min: 512
@@ -39,9 +31,7 @@ spec:
     max: 3
 
   metrics:
-  - name: consumer-MBs-per-second
-    type: prometheus
-    query: 'scalar(avg_over_time(consumer_mbs_per_second{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
+  # Metrics to optimize for
   - name: consumer-msgs-per-second
     type: prometheus
     query: 'scalar(avg_over_time(consumer_msgs_per_second{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
@@ -49,12 +39,27 @@ spec:
     type: prometheus
     query: 'scalar(avg_over_time(producer_msgs_per_second{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
   - name: producer-p95-ms-latency
+    minimize: true
     type: prometheus
     query: 'scalar(avg_over_time(producer_p95_ms_latency{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
+  - name: cost_heuristic
     minimize: true
+    type: kubernetes
+    query: '{{ resourceRequests .Target "cpu=0.017,memory=0.000000000003" }}'
+    target:
+      apiVersion: v1
+      kind: PodList
+      matchLabels:
+        app.kubernetes.io/name: kafka
+
+  # Extra metrics - track, but not to optimize directly
   - name: producer-avg-ms-latency
     type: prometheus
     query: 'scalar(avg_over_time(producer_avg_ms_latency{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
+    optimize: false
+  - name: consumer-MBs-per-second
+    type: prometheus
+    query: 'scalar(avg_over_time(consumer_mbs_per_second{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
     optimize: false
 
   patches:
@@ -71,6 +76,9 @@ spec:
               resources:
                 requests:
                   memory: {{ .Values.heap_mb }}Mi
+                  cpu: {{ .Values.cpu_m }}m
+                limits:
+                  cpu: {{ .Values.cpu_m }}m
               env:
               - name: KAFKA_HEAP_OPTS
                 value: '-Xmx{{ .Values.heap_mb }}m -Xms{{ .Values.heap_mb }}m'
@@ -82,7 +90,7 @@ spec:
         apiVersion: apps/v1
         kind: StatefulSet
         periodSeconds: 5
-        failureThreshold: 60
+        failureThreshold: 84
         conditionTypes:
         - stormforge.io/app-ready
 
@@ -146,7 +154,9 @@ spec:
                 resources:
                   requests:
                     memory: "1Gi"
-                    cpu: "500m"
+                    cpu: "2"
+                  limits:
+                    cpu: "2"
                 volumeMounts:
                 - mountPath: /work-dir
                   name: work-dir
@@ -170,7 +180,9 @@ spec:
                 resources:
                   requests:
                     memory: "500Mi"
-                    cpu: "500m"
+                    cpu: "2"
+                  limits:
+                    cpu: "2"
                 env:
                 - name: PARTITIONS
                   value: "30"

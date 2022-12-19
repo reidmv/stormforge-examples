@@ -4,14 +4,14 @@ kind: Service
 metadata:
   name: kafka-svc
   labels:
-    app: kafka-app
+    app.kubernetes.io/name: kafka
 spec:
   ports:
   - port: 9092
     name: http
   type: ClusterIP
   selector:
-    app: kafka-app
+    app.kubernetes.io/name: kafka
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -22,11 +22,11 @@ spec:
   replicas: 3
   selector:
     matchLabels:
-      app: kafka-app
+      app.kubernetes.io/name: kafka
   template:
     metadata:
       labels:
-        app: kafka-app
+        app.kubernetes.io/name: kafka
     spec:
       securityContext:
         fsGroup: 0
@@ -36,6 +36,8 @@ spec:
         resources:
           requests:
             memory: "1Gi"
+            cpu: "500m"
+          limits:
             cpu: "500m"
         ports:
         - containerPort: 9092
