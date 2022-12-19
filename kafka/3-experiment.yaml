@@ -42,7 +42,7 @@ spec:
     minimize: true
     type: prometheus
     query: 'scalar(avg_over_time(producer_p95_ms_latency{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
-  - name: cost_heuristic
+  - name: cost-heuristic
     minimize: true
     type: kubernetes
     query: '{{ resourceRequests .Target "cpu=0.017,memory=0.000000000003" }}'
