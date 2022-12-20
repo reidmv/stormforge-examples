@@ -6,6 +6,8 @@ metadata:
   labels:
     stormforge.io/application: 'kafka'
     stormforge.io/scenario: 'perftest'
+  annotations:
+    config.kubernetes.io/path: 'experiment.yaml'
 
 spec:
   optimization:
@@ -65,9 +67,9 @@ spec:
 
   patches:
   - targetRef:
+      name: kafka
       apiVersion: apps/v1
       kind: StatefulSet
-      name: kafka
     patch: |
       spec:
         template:
@@ -95,12 +97,9 @@ spec:
         conditionTypes:
         - stormforge.io/app-ready
 
-      setupServiceAccountName: optimize-pro-setuptask-sa
       setupTasks:
-      - name: monitoring
-        args:
-        - prometheus
-        - $(MODE)
+      - name: prometheus
+        helmChart: oci://registry.stormforge.io/optimize-pro/prometheus
 
       jobTemplate:
         spec:
