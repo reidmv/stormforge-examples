@@ -23,6 +23,16 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: kafka
+
+  volumeClaimTemplates:
+  - metadata:
+      name: kafka-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+
   template:
     metadata:
       labels:
@@ -76,11 +86,3 @@ spec:
           tcpSocket:
              port: 9092
 
-  volumeClaimTemplates:
-  - metadata:
-      name: kafka-storage
-    spec:
-      accessModes: [ "ReadWriteOnce" ]
-      resources:
-        requests:
-          storage: 10Gi

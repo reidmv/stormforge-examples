@@ -2,7 +2,7 @@
 apiVersion: optimize.stormforge.io/v1beta2
 kind: Experiment
 metadata:
-  name: kafka-001
+  name: kafka-004
   labels:
     stormforge.io/application: 'kafka'
     stormforge.io/scenario: 'perftest'
@@ -52,14 +52,15 @@ spec:
       matchLabels:
         app.kubernetes.io/name: kafka
 
-  # Extra metrics - track, but not to optimize directly
+  # Extra metrics - track them, but do not optimize for them directly
   - name: producer-avg-ms-latency
     type: prometheus
+    minimize: true
     query: 'scalar(avg_over_time(producer_avg_ms_latency{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
     optimize: false
-  - name: consumer-MBs-per-second
+  - name: consumer-mb-per-second
     type: prometheus
-    query: 'scalar(avg_over_time(consumer_mbs_per_second{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
+    query: 'scalar(avg_over_time(consumer_mb_per_second{job="trialRun", instance="{{ .Trial.Name }}"}[10m]))'
     optimize: false
 
   patches:
@@ -111,6 +112,7 @@ spec:
               volumes:
               - name: work-dir
                 emptyDir: {}
+
               initContainers:
               - name: topic-delete
                 image: docker.io/bitnami/kafka:3.3.1
@@ -148,6 +150,7 @@ spec:
                     --replication-factor $REPLICAS \
                     --config retention.ms=300000
                   exit 0
+
               containers:
               - name: consumer
                 image: docker.io/bitnami/kafka:3.3.1
@@ -172,7 +175,7 @@ spec:
                     --timeout 300000 \
                   | tee /work-dir/consumer.out
                   curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
-                    consumer_mbs_per_second $(tail -1 /work-dir/consumer.out | awk -F ', ' '{print $4}')
+                    consumer_mb_per_second $(tail -1 /work-dir/consumer.out | awk -F ', ' '{print $4}')
                     consumer_msgs_per_second $(tail -1 /work-dir/consumer.out  | awk -F ', ' '{print $6}')
                   EOF
               - name: producer
