@@ -23,6 +23,16 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: kafka
+
+  volumeClaimTemplates:
+  - metadata:
+      name: kafka-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 10Gi
+
   template:
     metadata:
       labels:
@@ -30,10 +40,6 @@ spec:
     spec:
       securityContext:
         fsGroup: 0
-      volumes:
-      - name: kafka-storage
-        emptyDir:
-          sizeLimit: 10Gi
       containers:
       - name: kafka
         image: docker.io/bitnami/kafka:3.3.1
@@ -79,3 +85,4 @@ spec:
           periodSeconds: 10
           tcpSocket:
              port: 9092
+
