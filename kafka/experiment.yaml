@@ -103,8 +103,8 @@ spec:
 
       jobTemplate:
         spec:
-          parallelism: 2
-          completions: 2
+          parallelism: 4
+          completions: 4
           template:
             spec:
               restartPolicy: Never
@@ -166,17 +166,21 @@ spec:
                 - '/bin/sh'
                 - '-c'
                 - |
+                  trap "touch /work-dir/consumer-done" EXIT
                   set -e
                   kafka-consumer-perf-test.sh \
                     --bootstrap-server kafka-0.kafka-svc:9092,kafka-1.kafka-svc:9092,kafka-2.kafka-svc:9092 \
                     --topic "test-${PARTITIONS}p-${REPLICAS}r-${HEAP_MB}m" \
                     --messages 1000000 \
                     --timeout 300000 \
+                    --group test \
                   | tee /work-dir/consumer.out
                   curl --data-binary @- "$PUSHGATEWAY_URL" <<EOF
                     consumer_mb_per_second $(tail -1 /work-dir/consumer.out | awk -F ', ' '{print $4}')
                     consumer_msgs_per_second $(tail -1 /work-dir/consumer.out  | awk -F ', ' '{print $6}')
                   EOF
+                  touch /work-dir/consumer-done
+                  while [ ! -e /work-dir/producer-done ]; do sleep 1; done
               - name: producer
                 image: docker.io/bitnami/kafka:3.3.1
                 resources:
@@ -197,6 +201,7 @@ spec:
                 - '/bin/sh'
                 - '-c'
                 - |
+                  trap "touch /work-dir/producer-done" EXIT
                   set -e
                   kafka-producer-perf-test.sh \
                     --topic "test-${PARTITIONS}p-${REPLICAS}r-${HEAP_MB}m" \
@@ -217,3 +222,5 @@ spec:
                     producer_avg_ms_latency $(tail -1 /work-dir/producer.out  | cut -f 8 -d ' ')
                     producer_p95_ms_latency $(tail -1 /work-dir/producer.out  | cut -f 19 -d ' ')
                   EOF
+                  touch /work-dir/producer-done
+                  while [ ! -e /work-dir/consumer-done ]; do sleep 1; done
